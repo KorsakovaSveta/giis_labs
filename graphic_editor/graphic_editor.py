@@ -29,7 +29,7 @@ class GraphicEditor:
         self.mainmenu.add_cascade(label="Поворот", command=self.activate_canvas_rotate_cube)
         self.mainmenu.add_cascade(label="Скалирование", command=self.activate_canvas_scale_cube)
         self.mainmenu.add_cascade(label="Отображение", command=self.activate_canvas_reflect_cube)
-        self.mainmenu.add_cascade(label="Перспектива", command=self.activate_canvas_perspective_cube)
+
         #self.cda = tk.Button(self.window, text="Отрезки", command=self.activate_canvas)
         self.mainmenu.add_cascade(label="Отладка", command=self.debug_mode_toggle)
         self.mainmenu.add_cascade(label="Остановить отладку", command=self.delete_grid)
@@ -112,9 +112,7 @@ class GraphicEditor:
     def activate_canvas_reflect_cube(self):
         self.window.bind('<KeyPress>', self.on_keybord_click_reflect_cube)
 
-    def activate_canvas_perspective_cube(self):
-        self.window.bind('<KeyPress>', self.on_keybord_click_perspective_cube)
-
+    
     def activate_canvas_editing(self):
         self.canvas.bind('<Button-1>', self.start_editing)
 
@@ -301,9 +299,6 @@ class GraphicEditor:
             self.points = []
             self.exit = False
 
-    # def on_keybord_click_perspective_cube(self, event):
-    #     if event.keysym == "p":
-    #         self.perspective_transform()
         
     def draw_line_cda(self):
         #self.canvas.create_line(0, 2, self.window.winfo_screenwidth(), 2, fill="gray")
@@ -637,12 +632,6 @@ class GraphicEditor:
             dot = np.dot(t_arr,p)
             self.canvas.create_rectangle(dot[0], dot[1], dot[0], dot[1], fill="black")
 
-    # def calculate_derivatives(self):
-    #     self.derivatives = []
-    #     for i in range(2):
-    #         dx = self.points[i+2][0] - self.points[i][0]
-    #         dy = self.points[i+2][1] - self.points[i][1]
-    #         self.derivatives.append((dx, dy))
 
     def draw_curve_Hermit(self):
         for point in self.points:
@@ -791,49 +780,6 @@ class GraphicEditor:
         self.draw_cube()
         self.reflectCube = False
 
-    # def perspective_transform(self):
-    #     self.perspectiveCube = True
-    #     self.canvas.delete("all")
-    #     x,y = self.points_rotate[0]
-       
-    #     vertices = [
-    #     self.transform_point(x - self.cube_size, y - self.cube_size, 0.01),
-    #     self.transform_point(x + self.cube_size, y - self.cube_size, 0.01),
-    #     self.transform_point(x + self.cube_size, y + self.cube_size, 0.01),
-    #     self.transform_point(x - self.cube_size, y + self.cube_size, 0.01),
-    #     self.transform_point(x - self.cube_size - 50, y - self.cube_size - 50, 0.01),
-    #     self.transform_point(x + self.cube_size - 50, y - self.cube_size - 50, 0.01),
-    #     self.transform_point(x + self.cube_size - 50, y + self.cube_size - 50, 0.01),
-    #     self.transform_point(x - self.cube_size - 50, y + self.cube_size - 50, 0.01)
-    # ]
-    
-    # # Задаем грани куба
-    #     edges = [
-    #         (0, 1), (1, 2), (2, 3), (3, 0),
-    #         (4, 5), (5, 6), (6, 7), (7, 4),
-    #         (0, 4), (1, 5), (2, 6), (3, 7)
-    #     ]
-
-    #     # Применение матрицы проекции к вершинам куба
-    #     for edge in edges:
-    #         x1, y1, _ = vertices[edge[0]]
-    #         x2, y2, _ = vertices[edge[1]]
-    #         self.canvas.create_line(x1, y1, x2, y2)
-
-    #     # Очистка холста
-        
-
-    #     self.perspectiveCube = True
-
-    # def transform_point(self, x, y, z):
-    #     field_of_view = math.radians(60)  # угол обзора в градусах
-    #     aspect_ratio = 1.0  # соотношение сторон экрана
-    #     near = 0.1  # плоскость отсечения близкая
-    #     far = 100.0
-    #     transformed_x = x / (z * math.tan(field_of_view / 2))
-    #     transformed_y = y / (z * math.tan(field_of_view / 2) * aspect_ratio)
-    #     transformed_z = (far + near) / (far - near) - (2 * far * near) / (far - near) / z
-    #     return transformed_x, transformed_y, transformed_z
 
     def draw_grid(self):
         for x in range(0, self.window.winfo_screenwidth(), self.grid_size):
@@ -846,8 +792,7 @@ class GraphicEditor:
         self.debug_mode = False
         self.canvas.delete("all")
         self.canvas.create_line(0, 2, self.window.winfo_screenwidth(), 2, fill="gray")
-        #self.cda = tk.Button(text="Отрезки" , state="disabled")
-        #self.debug = tk.Button(text="Отладка", state="disabled")
+  
 
     def run(self):
         self.window.mainloop()
@@ -855,17 +800,3 @@ class GraphicEditor:
 
 editor = GraphicEditor(800,600)
 editor.run()
-
-# def calculate_derivatives(self):
-#         self.derivatives = []
-#         for i in range(2):
-#             dx = self.points[i+2][0] - self.points[i][0]
-#             dy = self.points[i+2][1] - self.points[i][1]
-#             self.derivatives.append((dx, dy))
-
-# def draw_curve_Hermit(self):
-#     for i in range(0, 500):
-#         t = i / 500.0
-#         x = (2*t**3 - 3*t**2 + 1) * self.points[0][0] + (-2*t**3 + 3*t**2) * self.points[2][0] + (t**3 - 2*t**2 + t) * self.derivatives[0][0] + (t**3 - t**2) * self.derivatives[1][0]
-#         y = (2*t**3 - 3*t**2 + 1) * self.points[0][1] + (-2*t**3 + 3*t**2) * self.points[2][1] + (t**3 - 2*t**2 + t) * self.derivatives[0][1] + (t**3 - t**2) * self.derivatives[1][1]
-#         self.canvas.create_rectangle(x, y, x, y,)
