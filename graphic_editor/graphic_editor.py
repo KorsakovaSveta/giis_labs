@@ -2,14 +2,13 @@ import tkinter as tk
 import numpy as np
 import math, cmath
 import numpy as np
+import scipy.spatial
 class GraphicEditor:
     def __init__(self, width, height):
         self.width = width
         self.height = height
         self.window = tk.Tk()
-
         self.canvas = tk.Canvas(self.window, width=self.width, height=self.height)
-        
         self.mainmenu = tk.Menu(self.window)
         self.window.config(menu=self.mainmenu)
         self.line_menu = tk.Menu(self.mainmenu, tearoff=0)
@@ -29,16 +28,17 @@ class GraphicEditor:
         self.mainmenu.add_cascade(label="Поворот", command=self.activate_canvas_rotate_cube)
         self.mainmenu.add_cascade(label="Скалирование", command=self.activate_canvas_scale_cube)
         self.mainmenu.add_cascade(label="Отображение", command=self.activate_canvas_reflect_cube)
-
-        #self.cda = tk.Button(self.window, text="Отрезки", command=self.activate_canvas)
         self.mainmenu.add_cascade(label="Отладка", command=self.debug_mode_toggle)
         self.mainmenu.add_cascade(label="Остановить отладку", command=self.delete_grid)
         self.mainmenu.add_cascade(label="Корректировка", command=self.activate_canvas_editing)
         self.mainmenu.add_cascade(label="Остановить корректировку", command=self.end_editing)
         self.mainmenu.add_cascade(label="Очистить экран", command=self.clear_window)
-        #self.canvas.create_line(0, 2, self.window.winfo_screenwidth(), 2, fill="gray")
-        #self.cda.pack()   
-        #self.canvas.bind("<Button-1>", self.on_mouse_click)     
+        self.mainmenu.add_cascade(label="Полигон", command=self.activate_canvas_polygon)
+        self.mainmenu.add_cascade(label="Грэхем", command=self.on_mouse_click_graham)
+        self.mainmenu.add_cascade(label="Джарвис", command=self.on_mouse_click_jarvis)
+        self.mainmenu.add_cascade(label="Пересечение", command=self.activate_canvas_draw_intersection_line)
+        self.mainmenu.add_cascade(label="Принадлежность точки", command=self.activate_canvas_points_inside_polygon)
+
         self.center = np.array([self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2, 0, 1])
         self.new_point = None
         self.changing_and_new_point = []
@@ -63,6 +63,13 @@ class GraphicEditor:
         self.reflectCube = False
         self.perspectiveCube = False
         self.exit = False
+        self.current_polygon = None
+        self.graham = False
+        self.jarvis = False
+        self.graham_points = []
+        self.jarvis_points = []
+        self.line = []
+        self.points_for_intersection =[]
 
     def activate_canvas_cda(self):
         self.canvas.bind('<Button-1>', self.on_mouse_click_cda)
@@ -112,7 +119,15 @@ class GraphicEditor:
     def activate_canvas_reflect_cube(self):
         self.window.bind('<KeyPress>', self.on_keybord_click_reflect_cube)
 
+    def activate_canvas_polygon(self):
+        self.canvas.bind('<Button-1>', self.on_mouse_click_polygon)
     
+    def activate_canvas_draw_intersection_line(self):
+        self.canvas.bind('<Button-1>', self.on_mouse_click_draw_intersection_line)
+   
+    def activate_canvas_points_inside_polygon(self):
+        self.canvas.bind('<Button-1>', self.point_inside_polygon)
+
     def activate_canvas_editing(self):
         self.canvas.bind('<Button-1>', self.start_editing)
 
@@ -127,7 +142,6 @@ class GraphicEditor:
 
     def start_editing(self, event):
         self.dragging = True  
-        # self.canvas.bind('<Button-1>', self.on_mouse_click_choose_point) 
         self.changing_and_new_point.append((event.x, event.y)) 
         for point in self.points_for_change:
             self.canvas.create_rectangle(point[0]-4, point[1]-4, point[0]+4, point[1]+4, fill="red")
@@ -176,10 +190,8 @@ class GraphicEditor:
             self.for_all_points.append(self.points[i])   
         self.all_points.append(self.for_all_points)  
         self.for_all_points = []
-        #self.canvas.delete("all")
         self.points.clear()
         self.changing_and_new_point.clear()    
-
 
     def on_mouse_click_cda(self, event):
         self.points.append((event.x, event.y))
@@ -231,11 +243,10 @@ class GraphicEditor:
                 self.points_for_change = self.points
                 self.points = []
             
-
     def on_mouse_click_curve_Hermit(self, event):
         self.points.append((event.x, event.y))
         if len(self.points) ==2:   
-            #self.calculate_derivatives()        
+      
             self.draw_curve_Hermit()   
             if self.dragging == False:
                 self.points_for_change = self.points
@@ -244,27 +255,21 @@ class GraphicEditor:
 
     def on_mouse_click_B_splain(self, event):
         self.points.append((event.x, event.y))
-        if len(self.points) ==4:   
-            #self.calculate_derivatives()        
+        if len(self.points) ==4:         
             self.draw_B_splain()           
             if self.dragging == False:
                 self.points_for_change = self.points
                 self.points = []
     
     def on_mouse_click_draw_cube(self, event):
-        
         self.points.append((event.x, event.y))
-        if len(self.points) ==2:   
-            #self.calculate_derivatives()        
+        if len(self.points) ==2:         
             self.draw_cube() 
             self.points_rotate = self.points     
             self.points = []
     
-    def on_mouse_click_translate_cube(self, event):
-        
-        self.points.append((event.x, event.y))
-        
-            #self.calculate_derivatives()        
+    def on_mouse_click_translate_cube(self, event):  
+        self.points.append((event.x, event.y))     
         self.translate_cube()   
         self.points_rotate[0] = self.points[0]        
         self.points = []
@@ -274,18 +279,13 @@ class GraphicEditor:
             self.rotation_angle += 10
         elif event.keysym == "Right":
             self.rotation_angle -= 10
-              
         self.rotate_cube() 
 
     def on_keybord_click_scale_cube(self, event):
         if event.keysym == "Up":
             self.cube_size += 10
-            #self.points_rotate[0]=tuple(num+10 for num in self.points_rotate[0])
-            
         elif event.keysym == "Down":
-            self.cube_size -= 10
-            #self.points_rotate[0]=tuple(num-10 for num in self.points_rotate[0])
-            
+            self.cube_size -= 10     
         self.scale_cube() 
 
     def on_keybord_click_reflect_cube(self, event):
@@ -298,32 +298,196 @@ class GraphicEditor:
             self.draw_cube()
             self.points = []
             self.exit = False
+    
+    def on_mouse_click_graham(self):
+        self.canvas.delete(*self.line)
+        self.graham = True
+        self.draw_convex_hull_graham(self.graham_points)
+        self.graham = False
 
+    def on_mouse_click_jarvis(self):
+        self.canvas.delete(*self.line)
+        self.jarvis = True
         
+        self.draw_convex_hull_jarvis(self.jarvis_points)
+        self.jarvis = False
+
+    def on_mouse_click_draw_intersection_line(self, event):
+        self.points.append((event.x, event.y))
+        if len(self.points) == 2:
+            self.canvas.create_line(self.points[0], self.points[1], width=2)
+            self.line_segment_intersection()
+            self.points = []
+
+    def on_mouse_click_polygon(self, event):
+        self.graham_points = []
+        self.jarvis_points = []
+        self.points.append((event.x, event.y))
+        if len(self.points) == 5:            
+            self.canvas.delete(self.current_polygon)
+            self.current_polygon = None
+            if self.is_convex(self.points):
+                self.canvas.create_polygon(self.points, fill="green", outline="black", tags="polygon")
+                self.calculate_normals(self.points)
+            else:
+                self.canvas.create_polygon(self.points, fill="red", outline="black", tags="polygon")
+                self.calculate_normals(self.points)
+            for point in self.points:
+                self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+            self.graham_points = self.points
+            self.jarvis_points = self.points
+            self.points_for_intersection = self.points
+            self.points = []   
+    def is_convex(self, points):
+        cross_product = []
+        for i in range(5):
+            p1 = points[i]
+            p2 = points[(i+1)%5]
+            p3 = points[(i+2)%5]            
+            x1, y1 = p1
+            x2, y2 = p2
+            x3, y3 = p3            
+            cross_product.append((x2-x1)*(y3-y2) - (y2-y1)*(x3-x2))        
+        signs = [1 if cp > 0 else -1 if cp < 0 else 0 for cp in cross_product]        
+        if all(sign > 0 for sign in signs) or all(sign < 0 for sign in signs):
+            return True
+        else:
+            return False
+    
+    def calculate_normals(self, points):
+        mid_points = []
+        for i in range(5):
+            x1, y1 = points[i]
+            x2, y2 = points[(i+1)%5]            
+            mid_x = (x1 + x2) / 2
+            mid_y = (y1 + y2) / 2            
+            mid_points.append((mid_x, mid_y))            
+        normals = []
+        for i in range(5):
+            x1, y1 = mid_points[i]
+            x2, y2 = mid_points[(i+1)%5]            
+            normal_x = y2 - y1
+            normal_y = x1 - x2            
+            normals.append((normal_x, normal_y))
+            self.line.append(self.canvas.create_line(x1, y1, x1 + normal_x, y1 + normal_y, arrow=tk.LAST))            
+        return normals
+    
+    def draw_convex_hull_graham(self, points):
+        if len(points) < 3:
+            return        
+        def orientation(p, q, r):
+            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+            if val == 0:
+                return 0
+            elif val > 0:
+                return 1
+            else:
+                return 2     
+        n = len(points)
+        if n < 3:
+            return
+        hull = []
+        l = 0
+        for i in range(1, n):
+            if points[i][0] < points[l][0]:
+                l = i
+            elif points[i][0] == points[l][0] and points[i][1] < points[l][1]:
+                l = i
+        p = l
+        q = None
+        while True:
+            hull.append(points[p])
+            
+            q = (p + 1) % n
+            for i in range(n):
+                if orientation(points[p], points[i], points[q]) == 2:
+                    q = i
+            p = q
+            if p == l:
+                break
+        self.canvas.create_polygon(hull, fill="white", outline="blue")
+        for point in points:
+                self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+
+    def draw_convex_hull_jarvis(self, points):
+        if len(points) < 3:
+            return
+        def orientation(p, q, r):
+            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+            if val == 0:
+                return 0
+            elif val > 0:
+                return 1
+            else:
+                return 2
+        n = len(points)
+        if n < 3:
+            return
+        hull = []
+        l = 0
+        for i in range(1, n):
+            if points[i][0] < points[l][0]:
+                l = i
+            elif points[i][0] == points[l][0] and points[i][1] < points[l][1]:
+                l = i
+        p = l
+        q = None
+        while True:
+            hull.append(points[p])
+            
+            q = (p + 1) % n
+            for i in range(n):
+                if orientation(points[p], points[i], points[q]) == 2:
+                    q = i
+            p = q
+            if p == l:
+                break
+        self.canvas.create_polygon(hull, fill="white", outline="orange")
+        for point in points:
+                self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+    
+    def line_segment_intersection(self):
+        for i in range(len(self.points_for_intersection)):
+            side_start = self.points_for_intersection[i]
+            side_end = self.points_for_intersection[(i + 1) % len(self.points_for_intersection)]
+            x1, y1 = self.points[0]
+            x2, y2 = self.points[1]
+            x3, y3 = side_start
+            x4, y4 = side_end
+            denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+            if denominator != 0:
+                t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denominator
+                u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denominator
+                if 0 <= t <= 1 and 0 <= u <= 1:
+                    intersection_x = x1 + t * (x2 - x1)
+                    intersection_y = y1 + t * (y2 - y1)
+                    self.canvas.create_oval(intersection_x-3, intersection_y-3, intersection_x+3, intersection_y+3, fill="red")
+                   
+    def point_inside_polygon(self, event):
+        x, y = event.x, event.y
+        overlapping_objects = self.canvas.find_overlapping(x, y, x, y)
+        if len(overlapping_objects) > 0:
+            self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="blue")
+        else:
+            self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="black")
+        self.points=[]
+
     def draw_line_cda(self):
-        #self.canvas.create_line(0, 2, self.window.winfo_screenwidth(), 2, fill="gray")
-        #self.canvas.bind("<Button-1>", self.on_mouse_click)
-        
         x1, y1 = self.points[0]
         x2, y2 = self.points[1]
-
-        length = max(abs(x2-x1), abs(y2-y1))
-        
+        length = max(abs(x2-x1), abs(y2-y1))        
         dx = (x2 - x1)/length if length!= 0 else 0
         dy = (y2 - y1)/length if length!= 0 else 0
         sign_dx = np.sign(dx)
         sign_dy = np.sign(dy)
-
         x=x1 + 0.5*sign_dx
         y=y1 +0.5*sign_dy
         prev_x_grid=prev_y_grid=0
         for i in range(int(length+1)):
-            if self.debug_mode:
-                
+            if self.debug_mode:                
                  # Округляем значения x и y до ближайшего кратного grid_size
                 x_grid = x // self.grid_size
-                y_grid = y // self.grid_size
-                
+                y_grid = y // self.grid_size                
                 # Отображаем текущие значения x и y на сетке
                 if x_grid!= prev_x_grid or y_grid!= prev_y_grid:
                     self.canvas.create_rectangle(x_grid*self.grid_size, y_grid*self.grid_size, (x_grid+1)*self.grid_size, (y_grid+1)*self.grid_size, fill='lightgray')
@@ -332,15 +496,11 @@ class GraphicEditor:
                 prev_y_grid = y_grid
                 self.canvas.create_rectangle(x, y, x, y)
                 self.window.update()
-                #self.window.after(50)
             else:
                 self.canvas.create_rectangle(x, y, x, y)
             x += dx
-            y += dy
+            y += dy 
     
-    
-
-
     def draw_line_brezenhem(self):
         x1, y1 = self.points[0]
         x2, y2 = self.points[1]
@@ -353,12 +513,10 @@ class GraphicEditor:
         sx = -1 if x1 > x2 else 1
         sy = -1 if y1 > y2 else 1
         while x!= x2 or y!= y2:
-            if self.debug_mode:
-                
+            if self.debug_mode:                
                 # Округляем значения x и y до ближайшего кратного grid_size
                 x_grid = x // self.grid_size
-                y_grid = y // self.grid_size
-                
+                y_grid = y // self.grid_size                
                 # Отображаем текущие значения x и y на сетке
                 if x_grid!= prev_x_grid or y_grid!= prev_y_grid:
                     self.canvas.create_rectangle(x_grid*self.grid_size, y_grid*self.grid_size, (x_grid+1)*self.grid_size, (y_grid+1)*self.grid_size, fill='lightgray')
@@ -376,13 +534,10 @@ class GraphicEditor:
             else:
                 x+=sx
                 e+=2*dy
-            
 
-    
     def draw_line_wu(self):
         x1, y1 = self.points[0]
         x2, y2 = self.points[1]
-
         dx = x2 - x1
         dy = y2 - y1 
         x, y = x1, y1
@@ -392,37 +547,29 @@ class GraphicEditor:
             steps = abs(dx)
         else:
             steps = abs(dy)
-
         # Вычисляем значения интенсивности
         if steps != 0:
             xi = dx / steps
             yi = dy / steps
         else:
             xi = yi = 0
-
         # Рисуем отрезок
         for _ in range(int(steps)):
             # Округляем координаты
             x_int = int(x)
-            y_int = int(y)
-            
+            y_int = int(y)            
             # Вычисляем дробную часть координат
             x_frac = x - x_int
-            y_frac = y - y_int
-            
+            y_frac = y - y_int            
             # Вычисляем яркость пикселя
-            brightness = 1 - (x_frac + y_frac) / 2
-            
+            brightness = 1 - (x_frac + y_frac) / 2            
             # Устанавливаем цвет пикселя
-            color = "#%02x%02x%02x" % (int(brightness * 255), int(brightness * 255), int(brightness * 255))
-            
+            color = "#%02x%02x%02x" % (int(brightness * 255), int(brightness * 255), int(brightness * 255))            
             # Рисуем пиксель
-            if self.debug_mode:
-                
+            if self.debug_mode:                
                 # Округляем значения x и y до ближайшего кратного grid_size
                 x_grid = x // self.grid_size
-                y_grid = y // self.grid_size
-                
+                y_grid = y // self.grid_size                
                 # Отображаем текущие значения x и y на сетке
                 if x_grid!= prev_x_grid or y_grid!= prev_y_grid:
                     self.canvas.create_rectangle(x_grid*self.grid_size, y_grid*self.grid_size, (x_grid+1)*self.grid_size, (y_grid+1)*self.grid_size, fill=color)
@@ -446,7 +593,6 @@ class GraphicEditor:
             x += xi
             y += yi
        
-
     def draw_circle(self):
         x_center, y_center = self.points[0]
         x2, y2 = self.points[1]
@@ -456,9 +602,7 @@ class GraphicEditor:
         delta = 2 - 2 * radius
         error = 0
         while y > 0:
-            if self.debug_mode:
-               
-            
+            if self.debug_mode:              
                 self.canvas.create_rectangle(x_center + x, y_center + y, x_center + x, y_center + y, outline='black')
                 self.canvas.create_rectangle(x_center - x, y_center + y, x_center - x, y_center + y, outline='black')
                 self.canvas.create_rectangle(x_center + x, y_center - y, x_center + x, y_center - y, outline='black')
@@ -476,15 +620,12 @@ class GraphicEditor:
                     x += 1
                     delta += 2 * x + 1
                     continue
-
-           
             if delta > 0:
                 error = 2 * (delta - x) - 1
                 if error > 0:
                     y -= 1
                     delta += 1 - 2 * y
                     continue
-
             x += 1
             delta += 2 * (x - y) + 2
             y -= 1  
@@ -498,13 +639,9 @@ class GraphicEditor:
         x = 0
         y = b
         delta = a**2 + b**2 - 2*a**2*b
-       
         error = 0
-
         while y > 0:
             if self.debug_mode:
-               
-            
                 self.canvas.create_rectangle(x_center + x, y_center + y, x_center + x, y_center + y, outline='black')
                 self.canvas.create_rectangle(x_center - x, y_center + y, x_center - x, y_center + y, outline='black')
                 self.canvas.create_rectangle(x_center + x, y_center - y, x_center + x, y_center - y, outline='black')
@@ -522,20 +659,15 @@ class GraphicEditor:
                     x += 1
                     delta += b**2*(2 * x + 1)
                     continue
-
-           
             if delta > 0:
                 error = 2 * (delta - b**2*x) - 1
                 if error > 0:
                     y -= 1
                     delta += a**2*(1 - 2 * y)
                     continue
-
             x += 1
             delta += b**2*(2*x+1)+a**2*(1-2*y)
             y -= 1  
-
-
         
     def draw_giperbola(self):
         x0, y0 = self.points[0]
@@ -548,15 +680,12 @@ class GraphicEditor:
             x = x + 0.02 
             y = k / (x + c)
             if self.debug_mode:
-                
                 # Округляем значения x и y до ближайшего кратного grid_size
                 x_grid = x // self.grid_size
                 y_grid = y // self.grid_size
-                
                 # Отображаем текущие значения x и y на сетке
                 if x_grid!= prev_x_grid or y_grid!= prev_y_grid:
                     self.canvas.create_rectangle(x_grid*self.grid_size, y_grid*self.grid_size, (x_grid+1)*self.grid_size, (y_grid+1)*self.grid_size, fill='lightgray')
-                    
                     self.window.update()
                 prev_x_grid = x_grid
                 prev_y_grid = y_grid
@@ -564,16 +693,11 @@ class GraphicEditor:
             else:
                 self.canvas.create_rectangle(x, y, x, y, outline='black')
             
-            
     def draw_parabola(self):
         x, y = self.points[0]
         x2, y2 = self.points[1]
         xc,yc=x,y
         self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="red")  # Отметить клик мыши красным кружком
-      
-        #self.canvas.create_line(x, 0, x, self.height, fill="blue")  # Вертикальная линия через вершину
-        #self.canvas.create_line(0, y, self.width, y, fill="blue")  # Горизонтальная линия через вершину
-        
         # Генерация параболы
         a = (y2 - y) / ((x2 - x) ** 2)
         b = -2 * a * x
@@ -584,16 +708,13 @@ class GraphicEditor:
         while x <= 800:
             y = a * (x ** 2) + b * x + c
             if self.debug_mode:
-                
                 # Округляем значения x и y до ближайшего кратного grid_size
                 x_grid = x // self.grid_size
                 y_grid = y // self.grid_size
-                
                 # Отображаем текущие значения x и y на сетке
                 if x_grid!= prev_x_grid or y_grid!= prev_y_grid:
                     self.canvas.create_rectangle(x_grid*self.grid_size, y_grid*self.grid_size, (x_grid+1)*self.grid_size, (y_grid+1)*self.grid_size, fill='lightgray')
                     self.window.update()
-                    
                 prev_x_grid = x_grid
                 prev_y_grid = y_grid
                 self.canvas.create_rectangle(x, y, x, y, outline='black')
@@ -605,16 +726,12 @@ class GraphicEditor:
         self.canvas.create_oval(xc-5, yc-5, xc+5, yc+5, fill="red")
 
     def draw_curve_Bezie(self):
-       
-        
         for point in self.points:
             self.canvas.create_rectangle(point[0]-4, point[1]-4, point[0]+4, point[1]+4, fill="red")
         x0, y0 = self.points[0]
         x1, y1 = self.points[1]
         x2, y2 = self.points[2]
         x3, y3 = self.points[3]
-        
-        #t_arr = np.array([pow(t,3), t*t, t, 1])
         arr=np.array([[-1,3,-3,1],
                       [3,-6,3,0],
                       [-3,3,0,0],
@@ -640,7 +757,6 @@ class GraphicEditor:
         p1 = self.points[1]
         v0 = [0, 600]
         v1 = [800, 0]
-        
         for i in range(0, 1001):
             t = i / 1000.0
             x = (2*t**3 - 3*t**2 + 1) * self.points[0][0] + (-2*t**3 + 3*t**2) * self.points[1][0] + (t**3 - 2*t**2 + t) * v0[0] + (t**3 - t**2) * v1[0]
@@ -654,8 +770,6 @@ class GraphicEditor:
         x2, y2 = self.points[1]
         x3, y3 = self.points[2]
         x4, y4 = self.points[3]
-       
-        #t_arr = np.array([pow(t,3), t*t, t, 1])
         arr=np.array([[-1,3,-3,1],
                       [3,-6,3,0],
                       [-3,0,3,0],
@@ -669,8 +783,6 @@ class GraphicEditor:
         for i in range(3):
             
             p=np.dot(arr,p_arr)
-            
-            
             for t in range(0, 1001, 1):
                 t = t / 1000.0
                 t_arr = np.array([pow(t,3), t*t, t, 1])
@@ -682,12 +794,10 @@ class GraphicEditor:
             p_arr=np.roll(p_arr,-1,axis=0)
 
     def draw_cube(self):
-        
         if self.translateCube == False and\
             self.rotateCube == False and\
                 self.scaleCube == False and\
                     self.reflectCube == False:
-                        
             x, y = self.points[0]
             if self.exit == False:
                 self.cube_size = abs(self.points[1][1]-self.points[0][1])
@@ -698,7 +808,6 @@ class GraphicEditor:
             x,y = self.points_rotate[0]
         elif self.scaleCube == True: 
             x,y = self.points_rotate[0]
-            
         if self.reflectCube == True:
             x,y = self.points_rotate[0]
             vertices = [
@@ -723,7 +832,6 @@ class GraphicEditor:
             (x + self.cube_size - 50, y + self.cube_size - 50),
             (x - self.cube_size - 50, y + self.cube_size - 50)
         ]
-    
     # Задаем грани куба
         edges = [
             (0, 1), (1, 2), (2, 3), (3, 0),
@@ -735,7 +843,6 @@ class GraphicEditor:
                 [math.cos(math.radians(self.rotation_angle)), -math.sin(math.radians(self.rotation_angle))],
                 [math.sin(math.radians(self.rotation_angle)), math.cos(math.radians(self.rotation_angle))]
             ]
-       
         # Поворот вершин куба
             for i in range(len(vertices)):
                 x = vertices[i][0] - self.points_rotate[0][0]
@@ -743,9 +850,6 @@ class GraphicEditor:
                 new_x = x * rotation_matrix[0][0] + y * rotation_matrix[0][1]
                 new_y = x * rotation_matrix[1][0] + y * rotation_matrix[1][1]
                 vertices[i] = (new_x + self.points_rotate[0][0], new_y + self.points_rotate[0][1])
-                
-       
-            
         # Рисуем куб 
         if self.perspectiveCube == False:
             for edge in edges:
@@ -755,16 +859,13 @@ class GraphicEditor:
 
     def translate_cube(self):
         self.translateCube = True
-        
         self.canvas.delete("all")
-        #x, y = self.points[0]
         self.draw_cube()
         self.translateCube = False
 
     def rotate_cube(self):
         self.rotateCube = True
         self.canvas.delete("all")
-        #x, y = self.points[0]
         self.draw_cube()
         self.rotateCube = False
 
@@ -780,7 +881,6 @@ class GraphicEditor:
         self.draw_cube()
         self.reflectCube = False
 
-
     def draw_grid(self):
         for x in range(0, self.window.winfo_screenwidth(), self.grid_size):
             self.canvas.create_line(x, 0, x, self.window.winfo_screenheight(), fill="gray")
@@ -793,10 +893,8 @@ class GraphicEditor:
         self.canvas.delete("all")
         self.canvas.create_line(0, 2, self.window.winfo_screenwidth(), 2, fill="gray")
   
-
     def run(self):
         self.window.mainloop()
-        
-
+    
 editor = GraphicEditor(800,600)
 editor.run()
