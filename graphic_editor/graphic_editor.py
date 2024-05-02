@@ -2,7 +2,6 @@ import tkinter as tk
 import numpy as np
 import math, cmath
 import numpy as np
-import scipy.spatial
 class GraphicEditor:
     def __init__(self, width, height):
         self.width = width
@@ -38,7 +37,8 @@ class GraphicEditor:
         self.mainmenu.add_cascade(label="Джарвис", command=self.on_mouse_click_jarvis)
         self.mainmenu.add_cascade(label="Пересечение", command=self.activate_canvas_draw_intersection_line)
         self.mainmenu.add_cascade(label="Принадлежность точки", command=self.activate_canvas_points_inside_polygon)
-
+        self.mainmenu.add_cascade(label="Растровая развёртка", command=self.scanline_fill)
+        self.mainmenu.add_cascade(label="Активные рёбра", command=self.scanline_active_fill)
         self.center = np.array([self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2, 0, 1])
         self.new_point = None
         self.changing_and_new_point = []
@@ -70,6 +70,7 @@ class GraphicEditor:
         self.jarvis_points = []
         self.line = []
         self.points_for_intersection =[]
+        self.scanline_fill_points = []
 
     def activate_canvas_cda(self):
         self.canvas.bind('<Button-1>', self.on_mouse_click_cda)
@@ -319,6 +320,7 @@ class GraphicEditor:
             self.line_segment_intersection()
             self.points = []
 
+
     def on_mouse_click_polygon(self, event):
         self.graham_points = []
         self.jarvis_points = []
@@ -327,17 +329,19 @@ class GraphicEditor:
             self.canvas.delete(self.current_polygon)
             self.current_polygon = None
             if self.is_convex(self.points):
-                self.canvas.create_polygon(self.points, fill="green", outline="black", tags="polygon")
+                self.canvas.create_polygon(self.points, fill="", outline="green", tags="polygon")
                 self.calculate_normals(self.points)
             else:
-                self.canvas.create_polygon(self.points, fill="red", outline="black", tags="polygon")
+                self.canvas.create_polygon(self.points, fill="", outline="red", tags="polygon")
                 self.calculate_normals(self.points)
             for point in self.points:
                 self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
             self.graham_points = self.points
             self.jarvis_points = self.points
             self.points_for_intersection = self.points
+            self.scanline_fill_points = self.points
             self.points = []   
+
     def is_convex(self, points):
         cross_product = []
         for i in range(5):
@@ -471,6 +475,80 @@ class GraphicEditor:
         else:
             self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="black")
         self.points=[]
+
+    def scanline_fill(self):
+        edges = []
+        for i in range(5):
+            x1, y1 = self.scanline_fill_points[i]
+            x2, y2 = self.scanline_fill_points[(i + 1) % 5]
+            edges.append((x1, y1, x2, y2))
+        ymin = min(point[1] for point in self.scanline_fill_points)
+        ymax = max(point[1] for point in self.scanline_fill_points)
+
+        active_edges = []
+        for y in range(ymin, ymax+11, 10):
+            if y==ymin:
+                x = [point[0] for point in self.scanline_fill_points if point[1]==y]
+                prev_x_start = prev_x_end = x[0]
+                y_prev = y
+            for edge in edges:
+                x1, y1, x2, y2 = edge
+                if y1 < y <= y2 or y2 < y <= y1:
+                    if y2 != y1:
+                        x_intersection = int(x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+                        active_edges.append(x_intersection)
+
+            active_edges.sort()
+            for i in range(0, len(active_edges), 2):
+                self.canvas.create_line(active_edges[i], y, active_edges[i+1], y)
+                if y == ymax:
+                    self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], ymax, active_edges[i], ymax, fill="blue")
+                else:
+                    self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], y, active_edges[i], y, fill="blue")
+                prev_x_start = active_edges[i]
+                prev_x_end = active_edges[i+1]
+                y_prev = y
+                
+            active_edges = [x for x in active_edges if x > active_edges[-1]]
+        
+    def scanline_active_fill(self):
+        edges = []
+        for i in range(len(self.scanline_fill_points)):
+            start_point = self.scanline_fill_points[i]
+            end_point = self.scanline_fill_points[(i+1) % len(self.scanline_fill_points)]
+            edges.append((start_point, end_point))
+
+        sorted_edges = self.sort_edges(edges)
+        
+        active_edges = []
+        ymin = min([edge[0][1] for edge in sorted_edges])
+        ymax = max([edge[1][1] for edge in sorted_edges])
+
+        for y in range(ymin, ymax+1):
+            self.update_active_edges(active_edges, y)
+            self.add_new_edges(active_edges, sorted_edges, y)
+            active_edges.sort(key=lambda edge: edge[0][0])
+
+            i = 0
+            while i < len(active_edges):
+                x_start = int(active_edges[i][0][0])
+                x_end = int(active_edges[i+1][0][0]) if i+1 < len(active_edges) else x_start
+                self.canvas.create_line(x_start, y, x_end, y)
+                i += 2
+
+    def sort_edges(self, edges):
+        return sorted(edges, key=lambda edge: edge[0][1])
+
+# Функция для обновления списка активных ребер
+    def update_active_edges(self, active_edges, y):
+        active_edges[:] = [edge for edge in active_edges if edge[1][1] > y]
+
+    # Функция для добавления новых ребер в список активных ребер
+    def add_new_edges(self, active_edges, edges, y):
+        for edge in edges:
+            if edge[0][1] == y:
+                active_edges.append(edge)
+
 
     def draw_line_cda(self):
         x1, y1 = self.points[0]
@@ -788,8 +866,7 @@ class GraphicEditor:
                 t_arr = np.array([pow(t,3), t*t, t, 1])
                 t_arr=1/6*t_arr
                 dot = np.dot(t_arr,p)
-                # x = (1-t)**3/6 * x1 + (3*t**3-6*t**2+4)/6 * x2 + (-3*t**3+3*t**2+3*t+1)/6 * x3 + t**3/6 * x4
-                # y = (1-t)**3/6 * y1 + (3*t**3-6*t**2+4)/6 * y2 + (-3*t**3+3*t**2+3*t+1)/6 * y3 + t**3/6 * y4
+       
                 self.canvas.create_rectangle(dot[0], dot[1], dot[0], dot[1], fill="black")
             p_arr=np.roll(p_arr,-1,axis=0)
 
@@ -895,6 +972,6 @@ class GraphicEditor:
   
     def run(self):
         self.window.mainloop()
-    
+     
 editor = GraphicEditor(800,600)
 editor.run()
