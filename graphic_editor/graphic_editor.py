@@ -2,6 +2,8 @@ import tkinter as tk
 import numpy as np
 import math, cmath
 import numpy as np
+from scipy.spatial import Delaunay, Voronoi, voronoi_plot_2d
+import matplotlib.pyplot as plt
 class GraphicEditor:
     def __init__(self, width, height):
         self.width = width
@@ -39,6 +41,14 @@ class GraphicEditor:
         self.mainmenu.add_cascade(label="Принадлежность точки", command=self.activate_canvas_points_inside_polygon)
         self.mainmenu.add_cascade(label="Растровая развёртка", command=self.scanline_fill)
         self.mainmenu.add_cascade(label="Активные рёбра", command=self.scanline_active_fill)
+        self.mainmenu.add_cascade(label="Затравка", command=self.activate_canvas_flood_fill)
+        self.mainmenu.add_cascade(label="Построчная затравка", command=self.activate_canvas_string_flood_fill)
+        self.mainmenu.add_cascade(label="Триангуляция", command=self.triangulate)
+        self.mainmenu.add_cascade(label="Диаграмма Вороного", command=self.voronoi)
+        self.points_label = tk.Label(self.window, text="Координаты точек (x1 y1, x2 y2, ...):")
+        self.points_label.pack()
+        self.points_entry = tk.Entry(self.window)
+        self.points_entry.pack()
         self.center = np.array([self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2, 0, 1])
         self.new_point = None
         self.changing_and_new_point = []
@@ -70,7 +80,7 @@ class GraphicEditor:
         self.jarvis_points = []
         self.line = []
         self.points_for_intersection =[]
-        self.scanline_fill_points = []
+        self.scanline_fill_points, self.edges, self.rasterized_points,self.flood_point = [], [], [], []
 
     def activate_canvas_cda(self):
         self.canvas.bind('<Button-1>', self.on_mouse_click_cda)
@@ -131,6 +141,12 @@ class GraphicEditor:
 
     def activate_canvas_editing(self):
         self.canvas.bind('<Button-1>', self.start_editing)
+
+    def activate_canvas_flood_fill(self):
+        self.canvas.bind('<Button-1>', self.on_mouse_click_flood_fill)
+
+    def activate_canvas_string_flood_fill(self):
+        self.canvas.bind('<Button-1>', self.on_mouse_click_string_flood_fill)
 
     def debug_mode_toggle(self):
         self.canvas.delete("all")
@@ -342,6 +358,16 @@ class GraphicEditor:
             self.scanline_fill_points = self.points
             self.points = []   
 
+    def on_mouse_click_flood_fill(self, event):  
+        self.flood_point.append((event.x, event.y))     
+        self.flood_fill()         
+        self.flood_point = []
+
+    def on_mouse_click_string_flood_fill(self, event):  
+        self.flood_point.append((event.x, event.y))     
+        self.string_flood_fill()         
+        self.flood_point = []
+
     def is_convex(self, points):
         cross_product = []
         for i in range(5):
@@ -376,80 +402,49 @@ class GraphicEditor:
             self.line.append(self.canvas.create_line(x1, y1, x1 + normal_x, y1 + normal_y, arrow=tk.LAST))            
         return normals
     
-    def draw_convex_hull_graham(self, points):
-        if len(points) < 3:
-            return        
-        def orientation(p, q, r):
-            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
-            if val == 0:
-                return 0
-            elif val > 0:
-                return 1
-            else:
-                return 2     
-        n = len(points)
-        if n < 3:
-            return
+    def draw_convex_hull_graham(self, points):        
         hull = []
-        l = 0
-        for i in range(1, n):
-            if points[i][0] < points[l][0]:
-                l = i
-            elif points[i][0] == points[l][0] and points[i][1] < points[l][1]:
-                l = i
-        p = l
-        q = None
-        while True:
-            hull.append(points[p])
-            
-            q = (p + 1) % n
-            for i in range(n):
-                if orientation(points[p], points[i], points[q]) == 2:
-                    q = i
-            p = q
-            if p == l:
-                break
+        start = min(points, key=lambda x: (x[1], x[0]))
+
+        # Sort points by polar angle with the start point
+        points.sort(key=lambda p: math.atan2(p[1]-start[1], p[0]-start[0]))
+
+        # Initialize the hull with the start point
+        hull.append(start)
+
+        # Add points to the hull
+        for point in points[1:]:
+            while len(hull) > 1 and not self.is_left_turn(hull[-2], hull[-1], point):
+                hull.pop()
+            hull.append(point)
         self.canvas.create_polygon(hull, fill="white", outline="blue")
         for point in points:
-                self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+            self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+
+    def is_left_turn(self, p1, p2, p3):
+        return (p2[0]-p1[0]) * (p3[1]-p2[1]) - (p2[1]-p1[1]) * (p3[0]-p2[0]) > 0
 
     def draw_convex_hull_jarvis(self, points):
-        if len(points) < 3:
-            return
-        def orientation(p, q, r):
-            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
-            if val == 0:
-                return 0
-            elif val > 0:
-                return 1
-            else:
-                return 2
-        n = len(points)
-        if n < 3:
-            return
-        hull = []
-        l = 0
-        for i in range(1, n):
-            if points[i][0] < points[l][0]:
-                l = i
-            elif points[i][0] == points[l][0] and points[i][1] < points[l][1]:
-                l = i
-        p = l
-        q = None
+        self.hull_points = []
+        p = min(points, key=lambda x: x[1])
+        self.hull_points.append(p)
         while True:
-            hull.append(points[p])
-            
-            q = (p + 1) % n
-            for i in range(n):
-                if orientation(points[p], points[i], points[q]) == 2:
-                    q = i
+            q = None
+            for r in points:
+                if r != p:
+                    if q is None or self.orientation(p, q, r) > 0:
+                        q = r
             p = q
-            if p == l:
+            if p == self.hull_points[0]:
                 break
-        self.canvas.create_polygon(hull, fill="white", outline="orange")
+            self.hull_points.append(p)
+        self.canvas.create_polygon(self.hull_points, fill="white", outline="orange")
         for point in points:
-                self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
-    
+            self.canvas.create_oval(point[0]-2, point[1]-2, point[0]+2, point[1]+2, fill="black")
+            
+    def orientation(self, p, q, r):
+        return (q[1]-p[1]) * (r[0]-q[0]) - (q[0]-p[0]) * (r[1]-q[1])
+        
     def line_segment_intersection(self):
         for i in range(len(self.points_for_intersection)):
             side_start = self.points_for_intersection[i]
@@ -477,6 +472,11 @@ class GraphicEditor:
         self.points=[]
 
     def scanline_fill(self):
+        self.canvas.delete("all")
+        self.canvas.create_polygon(self.scanline_fill_points, fill="", outline="black", tags="polygon")
+                
+        for point in self.scanline_fill_points:
+            self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
         edges = []
         for i in range(5):
             x1, y1 = self.scanline_fill_points[i]
@@ -486,11 +486,11 @@ class GraphicEditor:
         ymax = max(point[1] for point in self.scanline_fill_points)
 
         active_edges = []
-        for y in range(ymin, ymax+11, 10):
-            if y==ymin:
-                x = [point[0] for point in self.scanline_fill_points if point[1]==y]
-                prev_x_start = prev_x_end = x[0]
-                y_prev = y
+        for y in range(ymin, ymax+1):
+            # if y==ymin:
+            #     x = [point[0] for point in self.scanline_fill_points if point[1]==y]
+            #     prev_x_start = prev_x_end = x[0]
+            #     y_prev = y
             for edge in edges:
                 x1, y1, x2, y2 = edge
                 if y1 < y <= y2 or y2 < y <= y1:
@@ -500,56 +500,146 @@ class GraphicEditor:
 
             active_edges.sort()
             for i in range(0, len(active_edges), 2):
-                self.canvas.create_line(active_edges[i], y, active_edges[i+1], y)
-                if y == ymax:
-                    self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], ymax, active_edges[i], ymax, fill="blue")
-                else:
-                    self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], y, active_edges[i], y, fill="blue")
-                prev_x_start = active_edges[i]
-                prev_x_end = active_edges[i+1]
-                y_prev = y
+                self.canvas.create_line(active_edges[i], y, active_edges[i+1], y, fill="blue")
+                # if y == ymax:
+                #     self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], ymax, active_edges[i], ymax, fill="blue")
+                # else:
+                #     self.canvas.create_polygon(prev_x_start, y_prev, prev_x_end, y_prev, active_edges[i+1], y, active_edges[i], y, fill="blue")
+                # prev_x_start = active_edges[i]
+                # prev_x_end = active_edges[i+1]
+                # y_prev = y
                 
             active_edges = [x for x in active_edges if x > active_edges[-1]]
         
     def scanline_active_fill(self):
-        edges = []
-        for i in range(len(self.scanline_fill_points)):
-            start_point = self.scanline_fill_points[i]
-            end_point = self.scanline_fill_points[(i+1) % len(self.scanline_fill_points)]
-            edges.append((start_point, end_point))
-
-        sorted_edges = self.sort_edges(edges)
+        self.canvas.delete("all")
+        self.canvas.create_polygon(self.scanline_fill_points, fill="", outline="black", tags="polygon")
+                
+        for point in self.scanline_fill_points:
+            self.canvas.create_oval(point[0]-3, point[1]-3, point[0]+3, point[1]+3, fill="black")
+        polygon_points = self.scanline_fill_points
+        min_y = min(point[1] for point in polygon_points)
+        max_y = max(point[1] for point in polygon_points)
+        edge_table = [[] for _ in range(max_y - min_y + 1)]
         
+        for i in range(len(polygon_points)):
+            x1, y1 = polygon_points[i]
+            x2, y2 = polygon_points[(i + 1) % len(polygon_points)]
+            
+            if y1 != y2:
+                if y1 > y2:
+                    y1, y2 = y2, y1
+                    x1, x2 = x2, x1
+                
+                m = (x2 - x1) / (y2 - y1)
+                edge_table[y1 - min_y].append((y2, x1, m))
+                
         active_edges = []
-        ymin = min([edge[0][1] for edge in sorted_edges])
-        ymax = max([edge[1][1] for edge in sorted_edges])
-
-        for y in range(ymin, ymax+1):
-            self.update_active_edges(active_edges, y)
-            self.add_new_edges(active_edges, sorted_edges, y)
-            active_edges.sort(key=lambda edge: edge[0][0])
-
-            i = 0
-            while i < len(active_edges):
-                x_start = int(active_edges[i][0][0])
-                x_end = int(active_edges[i+1][0][0]) if i+1 < len(active_edges) else x_start
-                self.canvas.create_line(x_start, y, x_end, y)
-                i += 2
-
-    def sort_edges(self, edges):
-        return sorted(edges, key=lambda edge: edge[0][1])
-
-# Функция для обновления списка активных ребер
-    def update_active_edges(self, active_edges, y):
-        active_edges[:] = [edge for edge in active_edges if edge[1][1] > y]
-
-    # Функция для добавления новых ребер в список активных ребер
-    def add_new_edges(self, active_edges, edges, y):
-        for edge in edges:
-            if edge[0][1] == y:
+        
+        for y in range(min_y, max_y + 1):
+            for edge in edge_table[y - min_y]:
                 active_edges.append(edge)
+                
+            active_edges.sort()
+            
+            for i in range(len(active_edges) - 1, -1, -1):
+                if y == active_edges[i][0]:
+                    active_edges.pop(i)
+                else:
+                    active_edges[i] = (active_edges[i][0], active_edges[i][1] + active_edges[i][2], active_edges[i][2])
+                    
+            for i in range(0, len(active_edges), 2):
+                x1 = int(active_edges[i][1])
+                x2 = int(active_edges[i + 1][1])
+                self.canvas.create_line(x1, y, x2, y, fill="green")
 
+    def flood_fill(self):
+        self.canvas.delete("all")
+        self.canvas.create_polygon(self.scanline_fill_points, fill="", outline="black", tags="polygon")
+        stack = []
+        visited = set()
+        image = np.zeros((self.canvas.winfo_height(), self.canvas.winfo_width()))
 
+        # Помещаем первую вершину в стек
+        stack.append(self.flood_point[0])
+
+        # Пока стек не пуст
+        while stack:
+            x, y = stack.pop()
+
+            # Закрашиваем пиксель и помечаем его как посещенный
+            self.canvas.create_rectangle(x, y, x, y, fill="purple", outline="")
+            
+
+            # Проверяем соседние пиксели
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                nx, ny = x + dx, y + dy
+
+                # Если пиксель не выходит за границы и не посещен
+                
+                if self.canvas.itemcget(self.canvas.find_closest(nx, ny), 'fill') != "purple" and self.canvas.itemcget(self.canvas.find_closest(nx, ny), 'fill') != "black" and (nx, ny) not in visited:
+                    stack.append((nx, ny))
+
+                    # Помечаем пиксель как посещенный
+                    visited.add((nx, ny))
+
+    def get_pixel_color(self, x, y):
+            item_id = self.canvas.find_closest(x, y)[0]
+            color = self.canvas.itemcget(item_id, "fill")
+            return color
+
+    def string_flood_fill(self):
+        self.canvas.delete("all")
+        self.canvas.create_polygon(self.scanline_fill_points, fill="", outline="black", tags="polygon")
+        # Создаем стек и помещаем затравочный пиксел в него
+       
+        min_y = min(point[1] for point in self.scanline_fill_points)
+        max_y = max(point[1] for point in self.scanline_fill_points)
+        
+        for y in range(min_y, max_y+1):
+            intersections = []
+            for i in range(len(self.scanline_fill_points)):
+                x1, y1 = self.scanline_fill_points[i]
+                x2, y2 = self.scanline_fill_points[(i+1) % len(self.scanline_fill_points)]
+                if (y1 <= y < y2) or (y2 <= y < y1):
+                    x = int(x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+                    intersections.append(x)
+            
+            intersections.sort()
+            for i in range(0, len(intersections), 2):
+                self.canvas.create_line(intersections[i], y, intersections[i+1], y, fill="red")
+
+    
+    def triangulate(self):
+        # Получение координат точек из поля ввода
+        points_str = self.points_entry.get()
+        points_list = points_str.split(",")
+        points = np.array([tuple(map(float, point.split())) for point in points_list])
+        
+        # Выполнение триангуляции Делоне
+        triangulation = Delaunay(points)
+        
+        # Визуализация триангуляции Делоне
+        plt.triplot(points[:,0], points[:,1], triangulation.simplices)
+        plt.plot(points[:,0], points[:,1], 'o')
+        plt.title('Триангуляция Делоне')
+        plt.show()
+
+    def voronoi(self):
+        # Получение координат точек из поля ввода
+        points_str = self.points_entry.get()
+        points_list = points_str.split(",")
+        points = np.array([tuple(map(float, point.split())) for point in points_list])
+        
+        # Выполнение построения диаграммы Вороного
+        vor = Voronoi(points)
+    
+        # Визуализация диаграммы Вороного
+        voronoi_plot_2d(vor)
+        plt.plot(points[:,0], points[:,1], 'o')
+        plt.title('Диаграмма Вороного')
+        plt.show()
+                                
     def draw_line_cda(self):
         x1, y1 = self.points[0]
         x2, y2 = self.points[1]
